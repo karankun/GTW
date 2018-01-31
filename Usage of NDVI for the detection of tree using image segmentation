@@ -1,0 +1,44 @@
+I = imread('C:\CWW GTW\sample images161.jp2');
+
+%% Calculate NDVI
+NIR = im2single(I(:,:,3));
+red = im2single(I(:,:,1));
+
+ndvi = (NIR - red) ./ (NIR + red);
+double(ndvi);
+imshow(ndvi,'DisplayRange',[-1 1]);
+
+%% Stretch to 0-255
+ndvi = floor((ndvi + 1) * 128); % [-1 1] -> [0 256]
+ndvi(ndvi < 0) = 0;             
+ndvi(ndvi > 255) = 255;         
+ndvi = uint8(ndvi);             
+
+%% Threshold the NDVI
+threshold = 100  % You may need to experiment with this value
+i = (ndvi > threshold);
+imshow(i)
+
+%% Write output to disk
+%tiffdata = geotiffinfo(file);
+%outfilename = [outputdir 'threshold_image' '.tif'];  
+%geotiffwrite(outfilename, i, R, 'GeoKeyDirectoryTag', tiffdata.GeoTIFFTags.GeoKeyDirectoryTag)
+
+
+%detect entire cell
+%J=rgb2gray(i);
+[~,threshold] = edge(i, 'sobel');
+fudgeFactor = .5;
+BWs = edge(i,'sobel', threshold*fudgeFactor);
+figure, imshow(BWs), title('binary gradient mask');
+%dilate the image
+se90 = strel('line', 3, 90);
+se0 = strel('line', 3, 0);
+
+BWsdil = imdilate(BWs, [se90 se0]);
+figure, imshow(BWsdil), title('dilated gradient mask');
+
+%fill interior gaps
+BWdfill = imfill(BWsdil, 'holes');
+figure, imshow(BWdfill);
+title('binary image with filled holes');

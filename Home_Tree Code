@@ -1,0 +1,203 @@
+
+%% a temporary directory to hold the pics
+cifar100Data = 'Z:\Matlabpics';
+
+%% the training data set location
+location = 'Z:\Matlabpics\cifar-100-matlab.tar';
+
+helperCIFAR100Data.download(location, cifar100Data);
+
+Load the CIFAR-10 training and test data.
+trainingImages, trainingLabels, testImages, testLabels] = helperCIFAR100Data.load(cifar100Data);
+
+load(location);
+
+%% show amount of images
+size(trainingImages);
+%% show amount of labels
+size(trainingLabels);
+
+
+%%--------------------------------------------------------CREATE CNN----------------------------------------%
+
+%% FIRST LAYER OF CNN : now we beging to build the layers. first we start with the Create the image input layer for 32x32x3 CIFAR-100 images using neural network toolbox
+[height, width, numChannels, ~] = size(trainingImages);
+
+imageSize = [height width numChannels];
+inputLayer = imageInputLayer(imageSize);
+
+%% MIDDLE LAYERS - convolutions, rectified linear units and pooling layers happen here 
+
+% Convolutional layer parameters
+filterSize = [5 5];
+numFilters = 32;
+
+middleLayers = [
+
+% The first convolutional layer has a bank of 32 5x5x3 filters. A
+% symmetric padding of 2 pixels is added to ensure that image borders
+% are included in the processing. This is important to avoid
+% information at the borders being washed away too early in the
+% network.
+convolution2dLayer(filterSize, numFilters, 'Padding', 2)
+
+% Note that the third dimension of the filter can be omitted because it
+% is automatically deduced based on the connectivity of the network. In
+% this case because this layer follows the image layer, the third
+% dimension must be 3 to match the number of channels in the input
+% image.
+
+% Next add the ReLU layer:
+reluLayer()
+
+% Follow it with a max pooling layer that has a 3x3 spatial pooling area
+% and a stride of 2 pixels. This down-samples the data dimensions from
+% 32x32 to 15x15.
+maxPooling2dLayer(3, 'Stride', 2)
+
+% Repeat the 3 core layers to complete the middle of the network.
+convolution2dLayer(filterSize, numFilters, 'Padding', 2)
+reluLayer()
+maxPooling2dLayer(3, 'Stride',2)
+
+convolution2dLayer(filterSize, 2 * numFilters, 'Padding', 2)
+reluLayer()
+maxPooling2dLayer(3, 'Stride',2)
+
+]
+
+%% we can create a deeper network by repeating these three basic layers. Due to downsampling, we should reduce the amount of pooling layers
+
+finalLayers = [
+
+% Add a fully connected layer with 64 output neurons. The output size of
+% this layer will be an array with a length of 64.
+fullyConnectedLayer(64)
+
+% Add an ReLU non-linearity.
+reluLayer
+
+% Add the last fully connected layer. At this point, the network must
+% produce 10 signals that can be used to measure whether the input image
+% belongs to one category or another. This measurement is made using the
+% subsequent loss layers.
+fullyConnectedLayer(numImageCategories)
+
+% Add the softmax loss layer and classification layer. The final layers use
+% the output of the fully connected layer to compute the categorical
+% probability distribution over the image classes. During the training
+% process, all the network weights are tuned to minimize the loss over this
+% categorical distribution.
+softmaxLayer
+classificationLayer
+]
+
+%% combine the layers into a list
+
+layers = [
+    inputLayer
+    middleLayers
+    finalLayers
+    ]
+
+%% Initialize the first convolutional layer weights using normally distributed random numbers with standard deviation of 0.0001. This helps improve the convergence of training. 
+layers(2).Weights = 0.0001 * randn([filterSize numChannels numFilters]);
+
+%% Set the network training options
+opts = trainingOptions('sgdm', ...
+    'Momentum', 0.9, ...
+    'InitialLearnRate', 0.001, ...
+    'LearnRateSchedule', 'piecewise', ...
+    'LearnRateDropFactor', 0.1, ...
+    'LearnRateDropPeriod', 8, ...
+    'L2Regularization', 0.004, ...
+    'MaxEpochs', 40, ...% reduced from 100
+    'MiniBatchSize', 128, ...
+    'Verbose', true); %shows
+
+
+% Train a network. takes several minutes depending on GPU 
+cifar100Net = trainNetwork(trainingImages, trainingLabels, layers, opts);
+
+% Extract the first convolutional layer weights
+w = cifar100Net.Layers(2).Weights;
+
+% rescale and resize the weights for better visualization
+w = mat2gray(w);
+w = imresize(w, [100 100]);
+
+%shows a picture of what the first layer convolutional weights look like.
+%This will be random colours and patterns.
+figure
+montage(w)
+
+% Run the network on the test set.
+YTest = classify(cifar100Net, testImages);
+
+% Calculate the accuracy.
+accuracy = sum(YTest == testLabels)/numel(testLabels)
+
+% Load the ground truth data
+data = load('trees');
+%note, in order for data load trees to work, you have to have loaded in the
+%ground truth data using image labeller application, and called the
+%variable 'trees'.
+trees = data.trees;
+
+% Update the path to the image files to match the local file system
+satellite = fullfile('C:/GroundTruth');
+trees.imageFilename = fullfile(satellite.imageFilename);
+
+% Display a summary of the ground truth data
+summary(trees);
+size(trees);
+
+% Display one training image and the ground truth bounding boxes
+I = imread(trees.imageFilename{1});
+I = insertObjectAnnotation(I, 'Rectangle', trees{1}, 'Tree', 'LineWidth', 6);
+
+figure
+imshow(I)
+%shows a picture of a tree that has been identified by the cnn
+
+testImage = imread('Z:\Aerial Images\testtreecount.jpg');
+
+% Detect trees
+[bboxes, score, label] = detect(rcnn, testImage, 'MiniBatchSize', 128)
+
+%% show the detection results
+[score, idx] = max(score);
+
+bbox = bboxes(idx, :);
+annotation = sprintf('%s: (Confidence = %f)', label(idx), score);
+
+outputImage = insertObjectAnnotation(testImage, 'rectangle', bbox, annotation);
+
+figure
+imshow(outputImage)
+
+%% debugging tools
+
+% The trained network is stored within the R-CNN detector
+rcnn.Network
+
+featureMap = activations(rcnn.Network, testImage, 'softmax', 'OutputAs', 'channels');
+
+% The softmax activations are stored in a 3-D array.
+size(featureMap)
+
+rcnn.ClassNames
+
+TreeMap = featureMap(:, :, 1);
+
+% Resize treeMap for visualization
+[height, width, ~] = size(testImage);
+TreeMap = imresize(TreeMap, [height, width]);
+
+% Visualize the feature map superimposed on the test image.
+featureMapOnImage = imfuse(testImage, TreeMap);
+
+figure
+imshow(featureMapOnImage)
+
+
